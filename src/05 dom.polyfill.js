@@ -1,13 +1,9 @@
 /*********************************************************************
  *                           DOM 底层补丁                             *
  **********************************************************************/
-if (!root.contains) { //safari5+是把contains方法放在Element.prototype上而不是Node.prototype
-    Node.prototype.contains = function(arg) {
-        return !!(this.compareDocumentPosition(arg) & 16)
-    }
-}
-avalon.contains = function(root, el) {
-    try {
+
+function fixContains(root, el) {
+    try { //IE6-8,游离于DOM树外的文本节点，访问parentNode有时会抛错
         while ((el = el.parentNode))
             if (el === root)
                 return true;
@@ -16,12 +12,31 @@ avalon.contains = function(root, el) {
         return false
     }
 }
+avalon.contains = fixContains
+//safari5+是把contains方法放在Element.prototype上而不是Node.prototype
+if (!root.contains) {
+    Node.prototype.contains = function (arg) {
+        return !!(this.compareDocumentPosition(arg) & 16)
+    }
+}
+//IE6-11的文档对象没有contains
+if (!DOC.contains) {
+    DOC.contains = function (b) {
+        return fixContains(DOC, b)
+    }
+}
+
+function outerHTML() {
+    return new XMLSerializer().serializeToString(this)
+}
+
+
 if (window.SVGElement) {
     var svgns = "http://www.w3.org/2000/svg"
     var svg = DOC.createElementNS(svgns, "svg")
     svg.innerHTML = '<circle cx="50" cy="50" r="40" fill="red" />'
-    if (!rsvg.test(svg.firstChild)) {// #409
-
+    if (!rsvg.test(svg.firstChild)) { // #409
+        /* jshint ignore:start */
         function enumerateNode(node, targetNode) {
             if (node && node.childNodes) {
                 var nodes = node.childNodes
@@ -29,9 +44,8 @@ if (window.SVGElement) {
                     if (el.tagName) {
                         var svg = DOC.createElementNS(svgns,
                                 el.tagName.toLowerCase())
-                        // copy attrs
-                        ap.forEach.call(el.attributes, function(attr) {
-                            svg.setAttribute(attr.name, attr.value)
+                        ap.forEach.call(el.attributes, function (attr) {
+                            svg.setAttribute(attr.name, attr.value) //复制属性
                         })
                         // 递归处理子节点
                         enumerateNode(el, svg)
@@ -40,14 +54,13 @@ if (window.SVGElement) {
                 }
             }
         }
+        /* jshint ignore:end */
         Object.defineProperties(SVGElement.prototype, {
             "outerHTML": {//IE9-11,firefox不支持SVG元素的innerHTML,outerHTML属性
                 enumerable: true,
                 configurable: true,
-                get: function() {
-                    return new XMLSerializer().serializeToString(this)
-                },
-                set: function(html) {
+                get: outerHTML,
+                set: function (html) {
                     var tagName = this.tagName.toLowerCase(),
                             par = this.parentNode,
                             frag = avalon.parseHTML(html)
@@ -66,13 +79,13 @@ if (window.SVGElement) {
             "innerHTML": {
                 enumerable: true,
                 configurable: true,
-                get: function() {
+                get: function () {
                     var s = this.outerHTML
                     var ropen = new RegExp("<" + this.nodeName + '\\b(?:(["\'])[^"]*?(\\1)|[^>])*>', "i")
                     var rclose = new RegExp("<\/" + this.nodeName + ">$", "i")
-                    return  s.replace(ropen, "").replace(rclose, "")
+                    return s.replace(ropen, "").replace(rclose, "")
                 },
-                set: function(html) {
+                set: function (html) {
                     if (avalon.clearHTML) {
                         avalon.clearHTML(this)
                         var frag = avalon.parseHTML(html)
@@ -83,18 +96,50 @@ if (window.SVGElement) {
         })
     }
 }
-//========================= event binding ====================
-var eventHooks = avalon.eventHooks 
-//针对firefox, chrome修正mouseenter, mouseleave(chrome30+)
+if (!root.outerHTML && window.HTMLElement) { //firefox 到11时才有outerHTML
+    HTMLElement.prototype.__defineGetter__("outerHTML", outerHTML);
+}
+
+//============================= event binding =======================
+var rmouseEvent = /^(?:mouse|contextmenu|drag)|click/
+function fixEvent(event) {
+    var ret = {}
+    for (var i in event) {
+        ret[i] = event[i]
+    }
+    var target = ret.target = event.srcElement
+    if (event.type.indexOf("key") === 0) {
+        ret.which = event.charCode != null ? event.charCode : event.keyCode
+    } else if (rmouseEvent.test(event.type)) {
+        var doc = target.ownerDocument || DOC
+        var box = doc.compatMode === "BackCompat" ? doc.body : doc.documentElement
+        ret.pageX = event.clientX + (box.scrollLeft >> 0) - (box.clientLeft >> 0)
+        ret.pageY = event.clientY + (box.scrollTop >> 0) - (box.clientTop >> 0)
+        ret.wheelDeltaY = ret.wheelDelta
+        ret.wheelDeltaX = 0
+    }
+    ret.timeStamp = new Date() - 0
+    ret.originalEvent = event
+    ret.preventDefault = function () { //阻止默认行为
+        event.returnValue = false
+    }
+    ret.stopPropagation = function () { //阻止事件在DOM树中的传播
+        event.cancelBubble = true
+    }
+    return ret
+}
+
+var eventHooks = avalon.eventHooks
+//针对firefox, chrome修正mouseenter, mouseleave
 if (!("onmouseenter" in root)) {
     avalon.each({
         mouseenter: "mouseover",
         mouseleave: "mouseout"
-    }, function(origType, fixType) {
+    }, function (origType, fixType) {
         eventHooks[origType] = {
             type: fixType,
-            deel: function(elem, fn) {
-                return function(e) {
+            deel: function (elem, _, fn) {
+                return function (e) {
                     var t = e.relatedTarget
                     if (!t || (t !== elem && !(elem.compareDocumentPosition(t) & 16))) {
                         delete e.type
@@ -110,31 +155,49 @@ if (!("onmouseenter" in root)) {
 avalon.each({
     AnimationEvent: "animationend",
     WebKitAnimationEvent: "webkitAnimationEnd"
-}, function(construct, fixType) {
+}, function (construct, fixType) {
     if (window[construct] && !eventHooks.animationend) {
         eventHooks.animationend = {
             type: fixType
         }
     }
 })
-
+//针对IE6-8修正input
+if (!("oninput" in DOC.createElement("input"))) {
+    eventHooks.input = {
+        type: "propertychange",
+        deel: function (elem, _, fn) {
+            return function (e) {
+                if (e.propertyName === "value") {
+                    e.type = "input"
+                    return fn.call(elem, e)
+                }
+            }
+        }
+    }
+}
 if (DOC.onmousewheel === void 0) {
     /* IE6-11 chrome mousewheel wheelDetla 下 -120 上 120
      firefox DOMMouseScroll detail 下3 上-3
      firefox wheel detlaY 下3 上-3
      IE9-11 wheel deltaY 下40 上-40
      chrome wheel deltaY 下100 上-100 */
+    var fixWheelType = DOC.onwheel !== void 0 ? "wheel" : "DOMMouseScroll"
+    var fixWheelDelta = fixWheelType === "wheel" ? "deltaY" : "detail"
     eventHooks.mousewheel = {
-        type: "wheel",
-        deel: function(elem, fn) {
-            return function(e) {
-                e.wheelDeltaY = e.wheelDelta = e.deltaY > 0 ? -120 : 120
+        type: fixWheelType,
+        deel: function (elem, _, fn) {
+            return function (e) {
+                e.wheelDeltaY = e.wheelDelta = e[fixWheelDelta] > 0 ? -120 : 120
                 e.wheelDeltaX = 0
-                Object.defineProperty(e, "type", {
-                    value: "mousewheel"
-                })
+                if (Object.defineProperty) {
+                    Object.defineProperty(e, "type", {
+                        value: "mousewheel"
+                    })
+                }
                 fn.call(elem, e)
             }
         }
     }
 }
+

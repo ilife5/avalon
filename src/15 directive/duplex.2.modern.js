@@ -1,7 +1,7 @@
 
 //处理radio, checkbox, text, textarea, password
 duplexBinding.INPUT = function(element, evaluator, data) {
-    var type = element.type,
+    var $type = element.type,
             bound = data.bound,
             $elem = avalon(element),
             composing = false
@@ -15,7 +15,8 @@ duplexBinding.INPUT = function(element, evaluator, data) {
         composing = false
     }
     //当value变化时改变model的值
-    function updateVModel() {
+
+    var updateVModel = function() {
         if (composing)//处理中文输入法在minlengh下引发的BUG
             return
         var val = element.oldValue = element.value //防止递归调用形成死循环
@@ -37,7 +38,7 @@ duplexBinding.INPUT = function(element, evaluator, data) {
             element.value = val
         }
     }
-    if (data.isChecked || element.type === "radio") {
+    if (data.isChecked || $type === "radio") {
         updateVModel = function() {
             if ($elem.data("duplex-observe") !== false) {
                 var lastValue = data.pipe(element.value, data, "get")
@@ -51,7 +52,7 @@ duplexBinding.INPUT = function(element, evaluator, data) {
             element.checked = element.oldValue = checked
         }
         bound("click", updateVModel)
-    } else if (type === "checkbox") {
+    } else if ($type === "checkbox") {
         updateVModel = function() {
             if ($elem.data("duplex-observe") !== false) {
                 var method = element.checked ? "ensure" : "remove"
@@ -70,7 +71,7 @@ duplexBinding.INPUT = function(element, evaluator, data) {
         }
         bound("change", updateVModel)
     } else {
-        var events = element.getAttribute("data-duplex-event") || element.getAttribute("data-event") || "input"
+        var events = element.getAttribute("data-duplex-event") || "input"
         if (element.attributes["data-event"]) {
             log("data-event指令已经废弃，请改用data-duplex-event")
         }
@@ -90,11 +91,16 @@ duplexBinding.INPUT = function(element, evaluator, data) {
             }
         })
     }
-
-    if (/text|password/.test(element.type)) {
+    bound("focus", function() {
+        element.msFocus = true
+    })
+    bound("blur", function() {
+        element.msFocus = false
+    })
+    if (rmsinput.test($type)) {
         watchValueInTimer(function() {
             if (root.contains(element)) {
-                if (element.value !== element.oldValue) {
+                if (!element.msFocus && element.oldValue !== element.value) {
                     updateVModel()
                 }
             } else if (!element.msRetain) {

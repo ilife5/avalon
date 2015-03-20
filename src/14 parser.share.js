@@ -1,26 +1,24 @@
 
-var keywords =
-        // 关键字
-        "break,case,catch,continue,debugger,default,delete,do,else,false" +
-        ",finally,for,function,if,in,instanceof,new,null,return,switch,this" +
-        ",throw,true,try,typeof,var,void,while,with" +
-        // 保留字
-        ",abstract,boolean,byte,char,class,const,double,enum,export,extends" +
-        ",final,float,goto,implements,import,int,interface,long,native" +
-        ",package,private,protected,public,short,static,super,synchronized" +
-        ",throws,transient,volatile" +
-        // ECMA 5 - use strict
-        ",arguments,let,yield" + ",undefined"
+var keywords = [
+    "break,case,catch,continue,debugger,default,delete,do,else,false",
+    "finally,for,function,if,in,instanceof,new,null,return,switch,this",
+    "throw,true,try,typeof,var,void,while,with", /* 关键字*/
+    "abstract,boolean,byte,char,class,const,double,enum,export,extends",
+    "final,float,goto,implements,import,int,interface,long,native",
+    "package,private,protected,public,short,static,super,synchronized",
+    "throws,transient,volatile", /*保留字*/
+    "arguments,let,yield,undefined" /* ECMA 5 - use strict*/].join(",")
 var rrexpstr = /\/\*[\w\W]*?\*\/|\/\/[^\n]*\n|\/\/[^\n]*$|"(?:[^"\\]|\\[\w\W])*"|'(?:[^'\\]|\\[\w\W])*'|[\s\t\n]*\.[\s\t\n]*[$\w\.]+/g
 var rsplit = /[^\w$]+/g
 var rkeywords = new RegExp(["\\b" + keywords.replace(/,/g, '\\b|\\b') + "\\b"].join('|'), 'g')
 var rnumber = /\b\d[^,]*/g
 var rcomma = /^,+|,+$/g
-var cacheVars = createCache(512)
-var getVariables = function(code) {
+var cacheVars = new Cache(512)
+var getVariables = function (code) {
     var key = "," + code.trim()
-    if (cacheVars[key]) {
-        return cacheVars[key]
+    var ret = cacheVars.get(key)
+    if (ret) {
+        return ret
     }
     var match = code
             .replace(rrexpstr, "")
@@ -29,7 +27,7 @@ var getVariables = function(code) {
             .replace(rnumber, "")
             .replace(rcomma, "")
             .split(/^$|,+/)
-    return cacheVars(key, uniqSet(match))
+    return cacheVars.put(key, uniqSet(match))
 }
 /*添加赋值语句*/
 
@@ -62,7 +60,7 @@ function uniqSet(array) {
     return ret
 }
 //缓存求值函数，以便多次利用
-var cacheExprs = createCache(128)
+var cacheExprs = new Cache(128)
 //取得求值函数及其传参
 var rduplex = /\w\[.*\]|\w\.\w/
 var rproxy = /(\$proxy\$[a-z]+)\d+$/
@@ -74,16 +72,16 @@ var rthimLeftParentheses = /"\s*\(/g
 function parseFilter(val, filters) {
     filters = filters
             .replace(rthimRightParentheses, "")//处理最后的小括号
-            .replace(rthimOtherParentheses, function() {//处理其他小括号
+            .replace(rthimOtherParentheses, function () {//处理其他小括号
                 return "],|"
             })
-            .replace(rquoteFilterName, function(a, b) { //处理|及它后面的过滤器的名字
+            .replace(rquoteFilterName, function (a, b) { //处理|及它后面的过滤器的名字
                 return "[" + quote(b)
             })
-            .replace(rpatchBracket, function() {
+            .replace(rpatchBracket, function () {
                 return '"],["'
             })
-            .replace(rthimLeftParentheses, function() {
+            .replace(rthimLeftParentheses, function () {
                 return '",'
             }) + "]"
     return  "return avalon.filters.$filter(" + val + ", " + filters + ")"
@@ -92,7 +90,7 @@ function parseFilter(val, filters) {
 function parseExpr(code, scopes, data) {
     var dataType = data.type
     var filters = data.filters || ""
-    var exprId = scopes.map(function(el) {
+    var exprId = scopes.map(function (el) {
         return String(el.$id).replace(rproxy, "$1")
     }) + code + dataType + filters
     var vars = getVariables(code).concat(),
@@ -116,9 +114,9 @@ function parseExpr(code, scopes, data) {
     }
     if (dataType !== "duplex" && (code.indexOf("||") > -1 || code.indexOf("&&") > -1)) {
         //https://github.com/RubyLouvre/avalon/issues/583
-        data.vars.forEach(function(v) {
+        data.vars.forEach(function (v) {
             var reg = new RegExp("\\b" + v + "(?:\\.\\w+|\\[\\w+\\])+", "ig")
-            code = code.replace(reg, function(_) {
+            code = code.replace(reg, function (_) {
                 var c = _.charAt(v.length)
                 var r = IEVersion ? code.slice(arguments[1] + _.length) : RegExp.rightContext
                 var method = /^\s*\(/.test(r)
@@ -145,7 +143,7 @@ function parseExpr(code, scopes, data) {
     //---------------args----------------
     data.args = args
     //---------------cache----------------
-    var fn = cacheExprs[exprId] //直接从缓存，免得重复生成
+    var fn = cacheExprs.get(exprId) //直接从缓存，免得重复生成
     if (fn) {
         data.evaluator = fn
         return
@@ -169,7 +167,7 @@ function parseExpr(code, scopes, data) {
                 "= vvv;\n} "
         try {
             fn = Function.apply(noop, names.concat(_body))
-            data.evaluator = cacheExprs(exprId, fn)
+            data.evaluator = cacheExprs.put(exprId, fn)
         } catch (e) {
             log("debug: parse error," + e.message)
         }
@@ -191,7 +189,7 @@ function parseExpr(code, scopes, data) {
     }
     try {
         fn = Function.apply(noop, names.concat("'use strict';\n" + prefix + code))
-        data.evaluator = cacheExprs(exprId, fn)
+        data.evaluator = cacheExprs.put(exprId, fn)
     } catch (e) {
         log("debug: parse error," + e.message)
     } finally {
@@ -204,7 +202,7 @@ function parseExpr(code, scopes, data) {
 
 function parseExprProxy(code, scopes, data, tokens, noregister) {
     if (Array.isArray(tokens)) {
-        code = tokens.map(function(el) {
+        code = tokens.map(function (el) {
             return el.expr ? "(" + el.value + ")" : quote(el.value)
         }).join(" + ")
     }

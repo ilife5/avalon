@@ -2,8 +2,8 @@
  *                           modelFactory                             *
  **********************************************************************/
 //avalon最核心的方法的两个方法之一（另一个是avalon.scan），返回一个ViewModel(VM)
-var VMODELS = avalon.vmodels = {} //所有vmodel都储存在这里
-avalon.define = function(id, factory) {
+var VMODELS = avalon.vmodels = createMap() //所有vmodel都储存在这里
+avalon.define = function (id, factory) {
     var $id = id.$id || id
     if (!$id) {
         log("warning: vm必须指定$id")
@@ -47,7 +47,7 @@ function isObservable(name, value, $skipArray) {
     return true
 }
 //ms-with,ms-each, ms-repeat绑定生成的代理对象储存池
-var midway = {}
+var midway = createMap()
 function getNewValue(accessor, name, value, $vmodel) {
     switch (accessor.type) {
         case 0://计算属性
@@ -74,43 +74,29 @@ function getNewValue(accessor, name, value, $vmodel) {
     }
 }
 
-var defineProperty = Object.defineProperty
-var canHideOwn = true
-//如果浏览器不支持ecma262v5的Object.defineProperties或者存在BUG，比如IE8
-//标准浏览器使用__defineGetter__, __defineSetter__实现
-try {
-    defineProperty({}, "_", {
-        value: "x"
-    })
-    var defineProperties = Object.defineProperties
-} catch (e) {
-    canHideOwn = false
-}
 function modelFactory(source, $special, $model) {
     if (Array.isArray(source)) {
         var arr = source.concat()
         source.length = 0
-        var collection = Collection(source)
+        var collection = Collection(source)// jshint ignore:line
         collection.pushArray(arr)
         return collection
     }
-    if (typeof source.nodeType === "number") {
-        return source
-    }
-    if (source.$id && source.$events) { //fix IE6-8 createWithProxy $val: val引发的BUG
+    //0 null undefined || Node || VModel
+    if (!source || source.nodeType > 0 || (source.$id && source.$events)) {
         return source
     }
     if (!Array.isArray(source.$skipArray)) {
         source.$skipArray = []
     }
-    source.$skipArray.$special = $special || {} //强制要监听的属性
+    source.$skipArray.$special = $special || createMap() //强制要监听的属性
     var $vmodel = {} //要返回的对象, 它在IE6-8下可能被偷龙转凤
     $model = $model || {} //vmodels.$model属性
-    var $events = {} //vmodel.$events属性
-    var watchedProperties = {} //监控属性
+    var $events = createMap() //vmodel.$events属性
+    var watchedProperties = createMap() //监控属性
     var initCallbacks = [] //初始化才执行的函数
     for (var i in source) {
-        (function(name, val) {
+        (function (name, val) {
             $model[name] = val
             if (!isObservable(name, val, source.$skipArray)) {
                 return //过滤所有非监控属性
@@ -118,7 +104,7 @@ function modelFactory(source, $special, $model) {
             //总共产生三种accessor
             $events[name] = []
             var valueType = avalon.type(val)
-            var accessor = function(newValue) {
+            var accessor = function (newValue) {
                 var name = accessor._name
                 var $vmodel = this
                 var $model = $vmodel.$model
@@ -137,19 +123,8 @@ function modelFactory(source, $special, $model) {
                     }
                     if (!isEqual(oldValue, newValue)) {
                         $model[name] = newValue
-                        if ($events.$digest) {
-                            if (!accessor.pedding) {
-                                accessor.pedding = true
-                                setTimeout(function() {
-                                    notifySubscribers($events[name]) //同步视图
-                                    safeFire($vmodel, name, $model[name], oldValue) //触发$watch回调
-                                    accessor.pedding = false
-                                })
-                            }
-                        } else {
-                            notifySubscribers($events[name]) //同步视图
-                            safeFire($vmodel, name, newValue, oldValue) //触发$watch回调
-                        }
+                        notifySubscribers($events[name]) //同步视图
+                        safeFire($vmodel, name, newValue, oldValue) //触发$watch回调
                     }
                 } else {
                     if (accessor.type === 0) { //type 0 计算属性 1 监控属性 2 对象属性
@@ -158,17 +133,7 @@ function modelFactory(source, $special, $model) {
                         if (oldValue !== newValue) {
                             $model[name] = newValue
                             //这里不用同步视图
-                            if ($events.$digest) {
-                                if (!accessor.pedding) {
-                                    accessor.pedding = true
-                                    setTimeout(function() {
-                                        safeFire($vmodel, name, $model[name], oldValue) //触发$watch回调
-                                        accessor.pedding = false
-                                    })
-                                }
-                            } else {
-                                safeFire($vmodel, name, newValue, oldValue) //触发$watch回调
-                            }
+                            safeFire($vmodel, name, newValue, oldValue) //触发$watch回调
                         }
                         return newValue
                     } else {
@@ -183,11 +148,11 @@ function modelFactory(source, $special, $model) {
                 accessor.set = val.set
                 accessor.get = val.get
                 accessor.type = 0
-                initCallbacks.push(function() {
+                initCallbacks.push(function () {
                     var data = {
-                        evaluator: function() {
+                        evaluator: function () {
                             data.type = Math.random(),
-                            data.element = null
+                                    data.element = null
                             $model[name] = accessor.get.call($vmodel)
                         },
                         element: head,
@@ -203,7 +168,7 @@ function modelFactory(source, $special, $model) {
                 //第2种为对象属性，产生子VM与监控数组
                 accessor.type = 2
                 accessor.valueType = valueType
-                initCallbacks.push(function() {
+                initCallbacks.push(function () {
                     var svmodel = modelFactory(val, 0, $model[name])
                     accessor.svmodel = svmodel
                     svmodel.$events[subscribers] = $events[name]
@@ -214,15 +179,15 @@ function modelFactory(source, $special, $model) {
             }
             accessor._name = name
             watchedProperties[name] = accessor
-        })(i, source[i])
+        })(i, source[i])// jshint ignore:line
     }
 
-    $$skipArray.forEach(function(name) {
+    $$skipArray.forEach(function (name) {
         delete source[name]
         delete $model[name] //这些特殊属性不应该在$model中出现
     })
 
-    $vmodel = defineProperties($vmodel, descriptorFactory(watchedProperties), source) //生成一个空的ViewModel
+    $vmodel = Object.defineProperties($vmodel, descriptorFactory(watchedProperties), source) //生成一个空的ViewModel
     for (var name in source) {
         if (!watchedProperties[name]) {
             $vmodel[name] = source[name]
@@ -232,37 +197,27 @@ function modelFactory(source, $special, $model) {
     $vmodel.$id = generateID()
     $vmodel.$model = $model
     $vmodel.$events = $events
-    for ( i in EventBus) {
-        var fn = EventBus[i]
-        if (!W3C) { //在IE6-8下，VB对象的方法里的this并不指向自身，需要用bind处理一下
-            fn = fn.bind($vmodel)
-        }
-        $vmodel[i] = fn
+    for (i in EventBus) {
+        $vmodel[i] = EventBus[i]
     }
 
-    if (canHideOwn) {
-        Object.defineProperty($vmodel, "hasOwnProperty", {
-            value: function(name) {
-                return name in this.$model
-            },
-            writable: false,
-            enumerable: false,
-            configurable: true
-        })
+    Object.defineProperty($vmodel, "hasOwnProperty", {
+        value: function (name) {
+            return name in this.$model
+        },
+        writable: false,
+        enumerable: false,
+        configurable: true
+    })
 
-    } else {
-        $vmodel.hasOwnProperty = function(name) {
-            return name in $vmodel.$model
-        }
-    }
-    initCallbacks.forEach(function(cb) { //收集依赖
+    initCallbacks.forEach(function (cb) { //收集依赖
         cb()
     })
     return $vmodel
 }
 
 //比较两个值是否相等
-var isEqual = Object.is || function(v1, v2) {
+var isEqual = Object.is || function (v1, v2) {
     if (v1 === 0 && v2 === 0) {
         return 1 / v1 === 1 / v2
     } else if (v1 !== v1) {
@@ -278,8 +233,8 @@ function safeFire(a, b, c, d) {
     }
 }
 
-var descriptorFactory = W3C ? function(obj) {
-    var descriptors = {}
+var descriptorFactory = function (obj) {
+    var descriptors = createMap()
     for (var i in obj) {
         descriptors[i] = {
             get: obj[i],
@@ -289,11 +244,7 @@ var descriptorFactory = W3C ? function(obj) {
         }
     }
     return descriptors
-} : function(a) {
-    return a
 }
-
-
 
 //应用于第2种accessor
 function objectFactory(parent, name, value, valueType) {
@@ -317,16 +268,17 @@ function objectFactory(parent, name, value, valueType) {
         }
         var ret = modelFactory(value)
         ret.$events[subscribers] = iterators
-        midway[ret.$id] = function(data) {
+        midway[ret.$id] = function (data) {
             while (data = iterators.shift()) {
-                (function(el) {
-                    avalon.nextTick(function() {
-                        if (el.type) { //重新绑定
+                (function (el) {
+                    avalon.nextTick(function () {
+                        var type = el.type
+                        if (type && bindingHandlers[type]) { //#753
                             el.rollback && el.rollback() //还原 ms-with ms-on
-                            bindingHandlers[el.type](el, el.vmodels)
+                            bindingHandlers[type](el, el.vmodels)
                         }
                     })
-                })(data)
+                })(data)// jshint ignore:line
             }
             delete midway[ret.$id]
         }
